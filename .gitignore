@@ -1,0 +1,27 @@
+# === Secretos ===
+.env
+.env.*
+!.env.example
+*.pat
+*.token
+
+# === Dependencias ===
+/node_modules
+
+# === Next.js ===
+/.next/
+/out/
+next-env.d.ts
+
+# === Producción ===
+/build
+
+# === Vercel ===
+.vercel
+
+# === Sistema / editores ===
+.DS_Store
+Thumbs.db
+*.tsbuildinfo
+.idea/
+.vscode/
