@@ -1,4 +1,11 @@
-import { Cabana, Huesped, Reserva } from "@/lib/types";
+import {
+  Cabana,
+  Huesped,
+  Reserva,
+  Pago,
+  Gasto,
+  MetodoPago,
+} from "@/lib/types";
 
 export const cabanas: Cabana[] = [
   {
@@ -77,4 +84,138 @@ export function proximasReservas(limit = 5): Reserva[] {
   return reservasOrdenadas()
     .filter((r) => r.estado !== "cancelada" && r.checkOut >= hoy)
     .slice(0, limit);
+}
+
+// ============================================================
+//  FINANZAS (mock)
+//  Modelado en el caso más completo: seña + saldo, ingresos y
+//  gastos, varios métodos de pago. Cuando el cliente confirme
+//  cómo cobra, la fase Supabase recorta lo que no use.
+// ============================================================
+
+const HOY = "2026-06-21";
+const SENA_PCT = 0.4; // seña 40% al confirmar; saldo 60% al check-in
+
+function addDias(iso: string, dias: number): string {
+  const d = new Date(iso + "T00:00:00");
+  d.setDate(d.getDate() + dias);
+  return d.toISOString().slice(0, 10);
+}
+
+function metodoSena(r: Reserva): MetodoPago {
+  return r.canal === "Instagram" ? "Mercado Pago" : "Transferencia";
+}
+
+// Genera los pagos de una reserva. Solo las confirmadas tienen seña
+// cobrada; el saldo se imputa cuando el huésped ya llegó (check-in pasado).
+function pagosDeReserva(r: Reserva): Pago[] {
+  if (r.estado !== "confirmada") return [];
+  const sena = Math.round(r.total * SENA_PCT);
+  const saldo = r.total - sena;
+  const pagos: Pago[] = [
+    {
+      id: `${r.id}-sena`,
+      reservaId: r.id,
+      fecha: addDias(r.checkIn, -18),
+      monto: sena,
+      metodo: metodoSena(r),
+      tipo: "seña",
+    },
+  ];
+  if (r.checkIn <= HOY) {
+    pagos.push({
+      id: `${r.id}-saldo`,
+      reservaId: r.id,
+      fecha: r.checkIn,
+      monto: saldo,
+      metodo: "Efectivo",
+      tipo: "saldo",
+    });
+  }
+  return pagos;
+}
+
+export const pagos: Pago[] = reservas.flatMap(pagosDeReserva);
+
+export const gastos: Gasto[] = [
+  { id: "g1", fecha: "2026-06-02", categoria: "Limpieza", descripcion: "Limpieza profunda post check-out", monto: 18000, metodo: "Efectivo", cabanaId: "cab-premium" },
+  { id: "g2", fecha: "2026-06-04", categoria: "Servicios", descripcion: "Factura de luz — mayo", monto: 34500, metodo: "Transferencia" },
+  { id: "g3", fecha: "2026-06-07", categoria: "Mantenimiento", descripcion: "Reparación de calefón Confort", monto: 42000, metodo: "Transferencia", cabanaId: "cab-confort" },
+  { id: "g4", fecha: "2026-06-10", categoria: "Insumos", descripcion: "Reposición amenities y ropa blanca", monto: 28700, metodo: "Mercado Pago" },
+  { id: "g5", fecha: "2026-06-12", categoria: "Servicios", descripcion: "Internet + gas envasado", monto: 21300, metodo: "Transferencia" },
+  { id: "g6", fecha: "2026-06-15", categoria: "Marketing", descripcion: "Campaña Instagram Ads", monto: 25000, metodo: "Tarjeta" },
+  { id: "g7", fecha: "2026-06-18", categoria: "Limpieza", descripcion: "Servicio de limpieza quincenal", monto: 30000, metodo: "Efectivo" },
+  { id: "g8", fecha: "2026-06-20", categoria: "Comisiones", descripcion: "Comisión Mercado Pago", monto: 9400, metodo: "Mercado Pago" },
+];
+
+const enMes = (iso: string, mes: string) => iso.startsWith(mes);
+
+// Lo ya pagado por una reserva (suma de sus pagos).
+export function pagadoDeReserva(reservaId: string): number {
+  return pagos
+    .filter((p) => p.reservaId === reservaId)
+    .reduce((acc, p) => acc + p.monto, 0);
+}
+
+// Reservas activas con saldo pendiente de cobro (no canceladas).
+export interface CobranzaPendiente {
+  reserva: Reserva;
+  pagado: number;
+  pendiente: number;
+}
+
+export function cobranzasPendientes(): CobranzaPendiente[] {
+  return reservas
+    .filter((r) => r.estado !== "cancelada")
+    .map((r) => {
+      const pagado = pagadoDeReserva(r.id);
+      return { reserva: r, pagado, pendiente: r.total - pagado };
+    })
+    .filter((c) => c.pendiente > 0)
+    .sort((a, b) => a.reserva.checkIn.localeCompare(b.reserva.checkIn));
+}
+
+// Métricas del mes en curso (junio 2026) para la pantalla de Finanzas.
+const MES_ACTUAL = "2026-06";
+
+export const finanzas = {
+  mesLabel: "Junio 2026",
+  ingresosCobradosMes: pagos
+    .filter((p) => enMes(p.fecha, MES_ACTUAL))
+    .reduce((a, p) => a + p.monto, 0),
+  gastosMes: gastos
+    .filter((g) => enMes(g.fecha, MES_ACTUAL))
+    .reduce((a, g) => a + g.monto, 0),
+  get resultadoNetoMes() {
+    return this.ingresosCobradosMes - this.gastosMes;
+  },
+  pendienteCobroTotal: cobranzasPendientes().reduce((a, c) => a + c.pendiente, 0),
+
+  // Ingresos facturados vs gastos, últimos 6 meses (mock).
+  serie: [
+    { mes: "Ene", ingresos: 1320000, gastos: 240000 },
+    { mes: "Feb", ingresos: 1480000, gastos: 255000 },
+    { mes: "Mar", ingresos: 980000, gastos: 210000 },
+    { mes: "Abr", ingresos: 760000, gastos: 195000 },
+    { mes: "May", ingresos: 1150000, gastos: 225000 },
+    { mes: "Jun", ingresos: 1486000, gastos: 208900 },
+  ],
+};
+
+// Distribución de lo cobrado en el mes por método de pago.
+export function cobradoPorMetodoMes(): { metodo: MetodoPago; monto: number }[] {
+  const acc = new Map<MetodoPago, number>();
+  for (const p of pagos.filter((p) => enMes(p.fecha, MES_ACTUAL))) {
+    acc.set(p.metodo, (acc.get(p.metodo) ?? 0) + p.monto);
+  }
+  return [...acc.entries()]
+    .map(([metodo, monto]) => ({ metodo, monto }))
+    .sort((a, b) => b.monto - a.monto);
+}
+
+// Gastos del mes ordenados por fecha (más recientes primero).
+export function gastosDelMes(): Gasto[] {
+  return gastos
+    .filter((g) => enMes(g.fecha, MES_ACTUAL))
+    .sort((a, b) => b.fecha.localeCompare(a.fecha));
 }

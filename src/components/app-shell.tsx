@@ -9,6 +9,7 @@ import {
   CalendarDays,
   TreePine,
   Users,
+  Wallet,
   Search,
   Menu,
   X,
@@ -22,6 +23,7 @@ const nav = [
   { href: "/calendario", label: "Calendario", icon: CalendarDays },
   { href: "/cabanas", label: "Cabañas", icon: TreePine },
   { href: "/huespedes", label: "Huéspedes", icon: Users },
+  { href: "/finanzas", label: "Finanzas", icon: Wallet },
 ];
 
 const titulos: Record<string, string> = {
@@ -30,6 +32,7 @@ const titulos: Record<string, string> = {
   "/calendario": "Calendario",
   "/cabanas": "Cabañas",
   "/huespedes": "Huéspedes",
+  "/finanzas": "Finanzas",
 };
 
 function Brand() {
