@@ -219,3 +219,129 @@ export function gastosDelMes(): Gasto[] {
     .filter((g) => enMes(g.fecha, MES_ACTUAL))
     .sort((a, b) => b.fecha.localeCompare(a.fecha));
 }
+
+// Reservas con check-in dentro del mes en curso (excluye canceladas).
+export function reservasDelMes(): Reserva[] {
+  return reservas.filter(
+    (r) => r.estado !== "cancelada" && enMes(r.checkIn, MES_ACTUAL)
+  );
+}
+
+// Facturado del mes (total de las reservas del mes, cobrado o no).
+export function facturadoMes(): number {
+  return reservasDelMes().reduce((a, r) => a + r.total, 0);
+}
+
+// Indicadores operativos del mes derivados de las reservas.
+export function indicadoresMes() {
+  const delMes = reservasDelMes();
+  const noches = delMes.reduce(
+    (a, r) =>
+      a +
+      Math.max(
+        1,
+        Math.round(
+          (new Date(r.checkOut).getTime() - new Date(r.checkIn).getTime()) /
+            86400000
+        )
+      ),
+    0
+  );
+  const facturado = facturadoMes();
+  return {
+    reservas: delMes.length,
+    nochesVendidas: noches,
+    ticketPromedio: delMes.length ? Math.round(facturado / delMes.length) : 0,
+    tarifaNocheProm: noches ? Math.round(facturado / noches) : 0,
+  };
+}
+
+// Ingresos facturados del mes por cabaña, con gastos atribuidos y neto.
+export interface RentabilidadCabana {
+  cabanaId: string;
+  nombre: string;
+  ingresos: number;
+  gastosAtribuidos: number;
+  neto: number;
+}
+
+export function rentabilidadPorCabana(): RentabilidadCabana[] {
+  const delMes = reservasDelMes();
+  return cabanas.map((c) => {
+    const ingresos = delMes
+      .filter((r) => r.cabanaId === c.id)
+      .reduce((a, r) => a + r.total, 0);
+    const gastosAtribuidos = gastos
+      .filter((g) => g.cabanaId === c.id && enMes(g.fecha, MES_ACTUAL))
+      .reduce((a, g) => a + g.monto, 0);
+    return {
+      cabanaId: c.id,
+      nombre: c.nombre,
+      ingresos,
+      gastosAtribuidos,
+      neto: ingresos - gastosAtribuidos,
+    };
+  });
+}
+
+// Facturación del mes por canal de venta.
+export function ingresosPorCanal(): { canal: Reserva["canal"]; monto: number }[] {
+  const canales: Reserva["canal"][] = ["WhatsApp", "Instagram", "Directo"];
+  return canales
+    .map((canal) => ({
+      canal,
+      monto: reservasDelMes()
+        .filter((r) => r.canal === canal)
+        .reduce((a, r) => a + r.total, 0),
+    }))
+    .sort((a, b) => b.monto - a.monto);
+}
+
+// Gastos del mes agrupados por categoría.
+export function gastosPorCategoria(): { categoria: Gasto["categoria"]; monto: number }[] {
+  const acc = new Map<Gasto["categoria"], number>();
+  for (const g of gastosDelMes()) {
+    acc.set(g.categoria, (acc.get(g.categoria) ?? 0) + g.monto);
+  }
+  return [...acc.entries()]
+    .map(([categoria, monto]) => ({ categoria, monto }))
+    .sort((a, b) => b.monto - a.monto);
+}
+
+// Libro de caja del mes: pagos entrantes (+) y gastos salientes (−) mezclados.
+export interface Movimiento {
+  id: string;
+  fecha: string;
+  concepto: string;
+  detalle: string;
+  metodo: MetodoPago;
+  monto: number; // positivo = ingreso, negativo = egreso
+  tipo: "ingreso" | "egreso";
+}
+
+export function movimientosMes(): Movimiento[] {
+  const ingresos: Movimiento[] = pagos
+    .filter((p) => enMes(p.fecha, MES_ACTUAL))
+    .map((p) => {
+      const r = reservas.find((x) => x.id === p.reservaId);
+      return {
+        id: `mov-${p.id}`,
+        fecha: p.fecha,
+        concepto: p.tipo === "seña" ? "Seña de reserva" : "Saldo de reserva",
+        detalle: r ? `${r.huespedNombre} · ${r.codigo}` : p.reservaId,
+        metodo: p.metodo,
+        monto: p.monto,
+        tipo: "ingreso" as const,
+      };
+    });
+  const egresos: Movimiento[] = gastosDelMes().map((g) => ({
+    id: `mov-${g.id}`,
+    fecha: g.fecha,
+    concepto: g.categoria,
+    detalle: g.descripcion,
+    metodo: g.metodo,
+    monto: -g.monto,
+    tipo: "egreso" as const,
+  }));
+  return [...ingresos, ...egresos].sort((a, b) => b.fecha.localeCompare(a.fecha));
+}
